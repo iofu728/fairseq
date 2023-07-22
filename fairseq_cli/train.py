@@ -28,7 +28,15 @@ from fairseq.data import iterators
 from fairseq.logging import meters, metrics, progress_bar
 from fairseq.model_parallel.megatron_trainer import MegatronTrainer
 from fairseq.trainer import Trainer
+import time
 
+from nvitop import Device
+# from museformer.self_attention_v2s1.blocksparse_rpe_self_attention_v2s1 import BlocksparseRpeSelfAttentionV2S1
+
+def get_gpu_info():
+    devices = Device.all()  # or `Device.cuda.all()` to use CUDA ordinal instead
+    memory_used = sum([device.memory_used() for device in devices])
+    return memory_used / 1024 ** 3
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -172,6 +180,19 @@ def should_stop_early(args, valid_loss):
 def train(args, trainer, task, epoch_itr):
     """Train the model for one epoch and return validation losses."""
     # Initialize data iterator
+    if args.attention_impl == "deepspeed":
+        import deepspeed
+        from deepspeed.runtime.utils import see_memory_usage
+        world_size = int(os.getenv('WORLD_SIZE', '1'))
+        local_rank = int(os.getenv('LOCAL_RANK', '0'))
+        # trainer.model = deepspeed.init_inference(trainer.model,
+        #                     dtype=torch.float32,
+        #                     mp_size=world_size,
+        #                     replace_with_kernel_inject=False,
+        #                     replace_method="auto",
+        #                     max_tokens=512,
+        #                     save_mp_checkpoint_path=None,
+        #                 )
     itr = epoch_itr.next_epoch_itr(
         fix_batches_to_gpus=args.fix_batches_to_gpus,
         shuffle=(epoch_itr.next_epoch_idx > args.curriculum),
@@ -201,7 +222,15 @@ def train(args, trainer, task, epoch_itr):
     valid_subsets = args.valid_subset.split(",")
     should_stop = False
     num_updates = trainer.get_num_updates()
+    st, max_gpu_human = 0, []
     for i, samples in enumerate(progress):
+        if i == 26:
+            break
+        continue
+    torch.cuda.synchronize()
+    st = time.time()
+
+    for i in range(1000):
         with metrics.aggregate("train_inner"), torch.autograd.profiler.record_function(
             "train_step-%d" % i
         ):
@@ -217,6 +246,22 @@ def train(args, trainer, task, epoch_itr):
                 # reset mid-epoch stats after each log interval
                 # the end-of-epoch stats will still be preserved
                 metrics.reset_meters("train_inner")
+        if i % 100 == 0:
+            max_gpu_human.append(get_gpu_info())
+        if i == 999:
+            res = 0
+            for k, v in trainer.model.named_modules():
+                if "convert_overhead" in v.__dict__:
+                # if isinstance(v, BlocksparseRpeSelfAttentionV2S1):
+                    res += v.convert_overhead
+            torch.cuda.synchronize()
+            end = time.time()
+            with open("result.txt", "a") as f:
+                if res != 0:
+                    f.write(f"{os.environ.get('METHOD')},{os.environ.get('TRUNCATE_TRAIN')},{end-st:.2f},{sum(max_gpu_human) / len(max_gpu_human):.2f},{res:.2f}\n")
+                else:
+                    f.write(f"{os.environ.get('METHOD')},{os.environ.get('TRUNCATE_TRAIN')},{end-st:.2f},{sum(max_gpu_human) / len(max_gpu_human):.2f}\n")
+            assert False
 
         end_of_epoch = not itr.has_next()
         valid_losses, should_stop = validate_and_save(

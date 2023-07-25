@@ -246,17 +246,19 @@ def train(args, trainer, task, epoch_itr):
                 # reset mid-epoch stats after each log interval
                 # the end-of-epoch stats will still be preserved
                 metrics.reset_meters("train_inner")
-        if i % 100 == 0:
+        else:
+            assert False
+        if i % 10 == 0:
             max_gpu_human.append(get_gpu_info())
-        if i == 999:
+        if i == 99:
             res = 0
             for k, v in trainer.model.named_modules():
                 if "convert_overhead" in v.__dict__:
                 # if isinstance(v, BlocksparseRpeSelfAttentionV2S1):
-                    res += v.convert_overhead
+                    res += v.convert_overhead 
             torch.cuda.synchronize()
             end = time.time()
-            with open("result.txt", "a") as f:
+            with open("results.txt", "a") as f:
                 if res != 0:
                     f.write(f"{os.environ.get('METHOD')},{os.environ.get('TRUNCATE_TRAIN')},{end-st:.2f},{sum(max_gpu_human) / len(max_gpu_human):.2f},{res:.2f}\n")
                 else:

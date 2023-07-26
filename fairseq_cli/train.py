@@ -248,14 +248,14 @@ def train(args, trainer, task, epoch_itr):
                 metrics.reset_meters("train_inner")
         else:
             assert False
-        if i % 10 == 0:
+        if i % 10 == 0 and i > 0:
             max_gpu_human.append(get_gpu_info())
         if i == 99:
             res = 0
             for k, v in trainer.model.named_modules():
                 if "convert_overhead" in v.__dict__:
                 # if isinstance(v, BlocksparseRpeSelfAttentionV2S1):
-                    res += v.convert_overhead 
+                    res += v.convert_overhead
             torch.cuda.synchronize()
             end = time.time()
             with open("results.txt", "a") as f:
